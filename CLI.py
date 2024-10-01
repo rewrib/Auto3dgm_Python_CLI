@@ -10,6 +10,7 @@ import numpy.matlib
 import pandas as pd
 import psutil
 import trimesh
+import json
 
 
 class Auto3DGM_CLI:
@@ -18,7 +19,12 @@ class Auto3DGM_CLI:
         self.alignData = None
         self.sampledMeshes = None
         self.originalMeshes = None
-        self.settings = vars(args)
+        # Read settings from JSON file if provided
+        if args.settings_json:
+            with open(args.settings_json, 'r') as f:
+                self.settings = json.load(f)
+        else:
+            self.settings = vars(args)
 
     def validate_settings(self):
         mesh_dir = self.settings["mesh_dir"]
@@ -428,6 +434,8 @@ def main():
     parser.add_argument(
         "--output-dir", type=str, default=os.getcwd(), help="Output directory"
     )
+
+    parser.add_argument('--settings-json', type=str, help='Path to settings JSON file')
 
     args = parser.parse_args()
 
