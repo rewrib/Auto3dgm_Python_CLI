@@ -1,0 +1,23 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Mesh Preprocessor",
+            "type": "python",
+            "request": "launch",
+            "program": "C:\\zeug\\BA\\LaptopBA\\code\\final\\Auto3dgm_Python_CLI\\mesh-preprocessor.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--input_dir",
+                "C:\\zeug\\BA2\\Morphosource\\Downloads",
+                "--output_dir",
+                "C:\\zeug\\BA2\\MeshPreprocessor\\run_20241103_154742\\processed_meshes",
+                "--num_smooth",
+                "2"
+            ]
+        }
+    ]
+}
