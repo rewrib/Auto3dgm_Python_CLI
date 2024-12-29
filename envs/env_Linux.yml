@@ -9,6 +9,7 @@ dependencies:
   - python=3.7.11
   - six
   - sqlite
+  - numpy
   - wheel
   - pip:
     - asynctest
@@ -16,7 +17,6 @@ dependencies:
     - lap
     - matplotlib
     - mayavi==4.7.2
-    - numpy
     - pandas
     - pathos==0.2.8
     - pillow
@@ -31,4 +31,4 @@ dependencies:
     - traitsui
     - trimesh==3.7.14
     - vtk==9.0.1
-prefix: /Users/USERNAME/anaconda3/envs/auto3dgm
+prefix: /home/batest/.conda/envs/auto3dgm

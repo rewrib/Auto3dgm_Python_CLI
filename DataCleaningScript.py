@@ -1,63 +1,43 @@
-import argparse
+# INPUT
+# path to meshes
+# PLEASE ADD SLASHES AS APPROPRIATE FOR OS
+meshDir = "/home/batest/Projects/BA/output/Morphosource/minitest/"
+# path to cleaned meshes
+outputDir = "/home/batest/Projects/BA/output/Auto3dgm_Python/minitest_cleaned/"
+
+
 import os
 
 import pymeshlab as pml
 
+notSimplyConnectedDir = outputDir + "/NotSimplyConnected/"
+discDir = outputDir + "DiscTopology/"
+sphereDir = outputDir + "SphereTopology/"
+# path to bad meshes
+badDir = outputDir + "BadMeshes/"
+# number of smoothing iterations
+numSmooth = 2
+
 
 def touch(newDir):
     if not os.path.isdir(newDir):
-        os.makedirs(newDir)
+        os.mkdir(newDir)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Mesh Preprocessing Script")
-    parser.add_argument(
-        "--mesh_dir",
-        type=str,
-        required=True,
-        help="Directory containing the meshes to process",
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        required=True,
-        help="Directory to save the processed meshes",
-    )
-    parser.add_argument(
-        "--num_smooth", type=int, default=2, help="Number of smoothing iterations"
-    )
-    args = parser.parse_args()
+meshList = os.listdir(meshDir)
+touch(outputDir)
+touch(notSimplyConnectedDir)
+touch(discDir)
+touch(sphereDir)
+touch(badDir)
 
-    meshDir = args.mesh_dir
-    outputDir = args.output_dir
-    numSmooth = args.num_smooth
-
-    notSimplyConnectedDir = os.path.join(outputDir, "NotSimplyConnected")
-    discDir = os.path.join(outputDir, "DiscTopology")
-    sphereDir = os.path.join(outputDir, "SphereTopology")
-    badDir = os.path.join(outputDir, "BadMeshes")
-
-    meshList = []
-    for root, dirs, files in os.walk(meshDir):
-        for file in files:
-            if file.lower().endswith((".obj", ".stl", ".ply", ".fbx", ".dae", ".3ds")):
-                full_path = os.path.join(root, file)
-                meshList.append(full_path)
-
-    touch(outputDir)
-    touch(notSimplyConnectedDir)
-    touch(discDir)
-    touch(sphereDir)
-    touch(badDir)
-
-    for meshPath in meshList:
-        print(f"Processing {meshPath}", flush=True)
+for i in range(len(meshList)):
+    try:
+        print(meshList[i], flush=True)
         ms = pml.MeshSet()
-        try:
-            ms.load_new_mesh(meshPath)
-        except Exception as e:
-            print(f"Failed to load mesh {meshPath}: {e}")
-            continue
+
+        ms.load_new_mesh(meshDir + meshList[i])
+
         ms.set_current_mesh(0)
         # ms.meshing_remove_connected_component_by_diameter(mincomponentdiag=pml.Percentage(20))
         out_dict = ms.get_topological_measures()
@@ -73,15 +53,14 @@ def main():
                 ms.meshing_close_holes(
                     maxholesize=50, newfaceselected=True, selfintersection=True
                 )
-            except Exception as e:
-                print(f"Failed to close holes in {meshPath}: {e}")
-                break
+            except:
+                continue
 
             out_dict = ms.get_topological_measures()
-            cnt += 1
+            cnt = cnt + 1
             if cnt == 30:
                 print(
-                    f"Unable to clean {meshPath} without deleting some connected components, attempting..."
+                    "Unable to clean without deleting some connected components, attempting..."
                 )
                 break
         if out_dict["connected_components_number"] > 1:
@@ -96,7 +75,7 @@ def main():
                     * ms.mesh(k).bounding_box().dim_z()
                 )
                 if curVol > bestVol:
-                    bestInd = k
+                    bestInd = j + 1
                     bestVol = curVol
             ms.set_current_mesh(bestInd)
         msTemp = pml.MeshSet()
@@ -108,12 +87,12 @@ def main():
             ms.meshing_surface_subdivision_loop(
                 loopweight=1, iterations=1, threshold=pml.Percentage(0)
             )
-            cnt -= 1
+            cnt = cnt - 1
             if cnt == 0:
                 break
         ms.meshing_decimation_quadric_edge_collapse(targetfacenum=10000, autoclean=True)
 
-        for _ in range(numSmooth):
+        for j in range(numSmooth):
             ms.apply_coord_hc_laplacian_smoothing()
 
         cnt = 0
@@ -130,7 +109,7 @@ def main():
                     * ms.mesh(k).bounding_box().dim_z()
                 )
                 if curVol > bestVol:
-                    bestInd = k
+                    bestInd = j + 1
                     bestVol = curVol
             ms.set_current_mesh(bestInd)
         msTemp = pml.MeshSet()
@@ -155,7 +134,7 @@ def main():
                         * ms.mesh(k).bounding_box().dim_z()
                     )
                     if curVol > bestVol:
-                        bestInd = k
+                        bestInd = j + 1
                         bestVol = curVol
                 ms.set_current_mesh(bestInd)
             msTemp = pml.MeshSet()
@@ -163,16 +142,13 @@ def main():
             ms = msTemp
             out_dict = ms.get_topological_measures()
 
-            cnt += 1
+            cnt = cnt + 1
             if cnt == 10:
+                out_dict
                 break
-
-        # Remove any existing files with the same name in the output directories
-        base_filename = os.path.basename(meshPath)
         for prefix in [badDir, notSimplyConnectedDir, discDir, sphereDir]:
-            output_file = os.path.join(prefix, base_filename)
-            if os.path.isfile(output_file):
-                os.remove(output_file)
+            if os.path.isfile(prefix + meshList[i]):
+                os.remove(prefix + meshList[i])
 
         ms.meshing_close_holes(
             maxholesize=30, newfaceselected=True, selfintersection=True
@@ -198,7 +174,7 @@ def main():
                     * ms.mesh(k).bounding_box().dim_z()
                 )
                 if curVol > bestVol:
-                    bestInd = k
+                    bestInd = j + 1
                     bestVol = curVol
             ms.set_current_mesh(bestInd)
         try:
@@ -208,28 +184,21 @@ def main():
             ms.meshing_re_orient_faces_coherentely()
             out_dict = ms.get_topological_measures()
 
-            output_filename = os.path.basename(meshPath)
             if out_dict["connected_components_number"] > 1:
-                output_path = os.path.join(badDir, output_filename)
-                ms.save_current_mesh(output_path)
-                print(f"{meshPath}: ConnectedComponentIssue", flush=True)
+                ms.save_current_mesh(badDir + meshList[i])
+                print(meshList[i] + ":ConnectedComponentIssue", flush=True)
             elif out_dict["genus"] > 0:
-                output_path = os.path.join(notSimplyConnectedDir, output_filename)
-                ms.save_current_mesh(output_path)
-                print(f"{meshPath}: NotSimplyConnected", flush=True)
+                ms.save_current_mesh(notSimplyConnectedDir + meshList[i])
+                print(meshList[i] + ":NotSimplyConnected", flush=True)
             elif out_dict["boundary_edges"] > 0:
-                output_path = os.path.join(discDir, output_filename)
-                ms.save_current_mesh(output_path)
-                print(f"{meshPath}: Disc", flush=True)
+                ms.save_current_mesh(discDir + meshList[i])
+                print(meshList[i] + ":Disc", flush=True)
             else:
-                output_path = os.path.join(sphereDir, output_filename)
-                ms.save_current_mesh(output_path)
-                print(f"{meshPath}: Sphere", flush=True)
-        except Exception as e:
-            output_path = os.path.join(badDir, output_filename)
-            ms.save_current_mesh(output_path)
-            print(f"{meshPath}: BadMesh - {e}", flush=True)
-
-
-if __name__ == "__main__":
-    main()
+                ms.save_current_mesh(sphereDir + meshList[i])
+                print(meshList[i] + ":Sphere", flush=True)
+        except:
+            ms.save_current_mesh(badDir + meshList[i])
+            print(meshList[i] + ":BadMesh", flush=True)
+    except Exception as e:
+        print(f"Error loading mesh: {e}", flush=True)
+        continue
