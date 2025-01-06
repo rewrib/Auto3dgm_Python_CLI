@@ -1,20 +1,15 @@
-# INPUT
-# path to meshes
-# PLEASE ADD SLASHES AS APPROPRIATE FOR OS
-meshDir = "/home/batest/Projects/BA/output/Morphosource/minitest/"
-# path to cleaned meshes
-outputDir = "/home/batest/Projects/BA/output/Auto3dgm_Python/minitest_cleaned/"
-
-
 import os
 
 import pymeshlab as pml
 
-notSimplyConnectedDir = outputDir + "/NotSimplyConnected/"
-discDir = outputDir + "DiscTopology/"
-sphereDir = outputDir + "SphereTopology/"
-# path to bad meshes
-badDir = outputDir + "BadMeshes/"
+# Paths to meshes
+meshDir = r"D:\Uni\BA\output\Morphosource\Meshes2"
+outputDir = r"D:\Uni\BA\output\Morphosource\Meshes2_cleaned"
+
+notSimplyConnectedDir = os.path.join(outputDir, "NotSimplyConnected")
+discDir = os.path.join(outputDir, "DiscTopology")
+sphereDir = os.path.join(outputDir, "SphereTopology")
+badDir = os.path.join(outputDir, "BadMeshes")
 # number of smoothing iterations
 numSmooth = 2
 
@@ -31,12 +26,13 @@ touch(discDir)
 touch(sphereDir)
 touch(badDir)
 
-for i in range(len(meshList)):
+for mesh in meshList:
     try:
-        print(meshList[i], flush=True)
+        print(mesh, flush=True)
         ms = pml.MeshSet()
 
-        ms.load_new_mesh(meshDir + meshList[i])
+        meshPath = os.path.join(meshDir, mesh)
+        ms.load_new_mesh(meshPath)
 
         ms.set_current_mesh(0)
         # ms.meshing_remove_connected_component_by_diameter(mincomponentdiag=pml.Percentage(20))
@@ -147,8 +143,9 @@ for i in range(len(meshList)):
                 out_dict
                 break
         for prefix in [badDir, notSimplyConnectedDir, discDir, sphereDir]:
-            if os.path.isfile(prefix + meshList[i]):
-                os.remove(prefix + meshList[i])
+            meshPath = os.path.join(prefix, mesh)
+            if os.path.isfile(meshPath):
+                os.remove(meshPath)
 
         ms.meshing_close_holes(
             maxholesize=30, newfaceselected=True, selfintersection=True
@@ -185,20 +182,20 @@ for i in range(len(meshList)):
             out_dict = ms.get_topological_measures()
 
             if out_dict["connected_components_number"] > 1:
-                ms.save_current_mesh(badDir + meshList[i])
-                print(meshList[i] + ":ConnectedComponentIssue", flush=True)
+                ms.save_current_mesh(os.path.join(badDir, mesh))
+                print(f"{mesh}: ConnectedComponentIssue", flush=True)
             elif out_dict["genus"] > 0:
-                ms.save_current_mesh(notSimplyConnectedDir + meshList[i])
-                print(meshList[i] + ":NotSimplyConnected", flush=True)
+                ms.save_current_mesh(os.path.join(notSimplyConnectedDir, mesh))
+                print(f"{mesh}: NotSimplyConnected", flush=True)
             elif out_dict["boundary_edges"] > 0:
-                ms.save_current_mesh(discDir + meshList[i])
-                print(meshList[i] + ":Disc", flush=True)
+                ms.save_current_mesh(os.path.join(discDir, mesh))
+                print(f"{mesh}: Disc", flush=True)
             else:
-                ms.save_current_mesh(sphereDir + meshList[i])
-                print(meshList[i] + ":Sphere", flush=True)
+                ms.save_current_mesh(os.path.join(sphereDir, mesh))
+                print(f"{mesh}: Sphere", flush=True)
         except:
-            ms.save_current_mesh(badDir + meshList[i])
-            print(meshList[i] + ":BadMesh", flush=True)
+            ms.save_current_mesh(os.path.join(badDir, mesh))
+            print(f"{mesh}: BadMesh", flush=True)
     except Exception as e:
         print(f"Error loading mesh: {e}", flush=True)
         continue
