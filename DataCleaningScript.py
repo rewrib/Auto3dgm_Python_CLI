@@ -10,6 +10,7 @@ notSimplyConnectedDir = os.path.join(outputDir, "NotSimplyConnected")
 discDir = os.path.join(outputDir, "DiscTopology")
 sphereDir = os.path.join(outputDir, "SphereTopology")
 badDir = os.path.join(outputDir, "BadMeshes")
+
 # number of smoothing iterations
 numSmooth = 2
 
@@ -26,6 +27,53 @@ touch(discDir)
 touch(sphereDir)
 touch(badDir)
 
+
+def try_manifold_repairs(ms, out_dict, cnt):
+    while not out_dict["is_mesh_two_manifold"]:
+        ms.meshing_repair_non_manifold_edges(method=0)
+        ms.meshing_repair_non_manifold_vertices(vertdispratio=0)
+        ms.meshing_remove_unreferenced_vertices()
+        ms.meshing_remove_duplicate_faces()
+        ms.meshing_remove_duplicate_vertices()
+        try:
+            ms.meshing_close_holes(
+                maxholesize=50, newfaceselected=True, selfintersection=True
+            )
+        except:
+            continue
+
+        out_dict = ms.get_topological_measures()
+        cnt = cnt + 1
+        if cnt == 30:
+            print(
+                "Unable to clean without deleting some connected components, attempting..."
+            )
+            break
+    return out_dict
+
+
+def keep_largest_component(ms, out_dict):
+    if out_dict["connected_components_number"] > 1:
+        ms.generate_splitting_by_connected_components()
+        bestVol = 0
+        bestInd = 0
+        for j in range(out_dict["connected_components_number"]):
+            k = j + 1
+            curVol = (
+                ms.mesh(k).bounding_box().dim_x()
+                * ms.mesh(k).bounding_box().dim_y()
+                * ms.mesh(k).bounding_box().dim_z()
+            )
+            if curVol > bestVol:
+                bestInd = j + 1
+                bestVol = curVol
+        ms.set_current_mesh(bestInd)
+    msTemp = pml.MeshSet()
+    msTemp.add_mesh(ms.current_mesh())
+    ms = msTemp
+    return ms
+
+
 for mesh in meshList:
     try:
         print(mesh, flush=True)
@@ -39,44 +87,8 @@ for mesh in meshList:
         out_dict = ms.get_topological_measures()
 
         cnt = 0
-        while not out_dict["is_mesh_two_manifold"]:
-            ms.meshing_repair_non_manifold_edges(method=0)
-            ms.meshing_repair_non_manifold_vertices(vertdispratio=0)
-            ms.meshing_remove_unreferenced_vertices()
-            ms.meshing_remove_duplicate_faces()
-            ms.meshing_remove_duplicate_vertices()
-            try:
-                ms.meshing_close_holes(
-                    maxholesize=50, newfaceselected=True, selfintersection=True
-                )
-            except:
-                continue
-
-            out_dict = ms.get_topological_measures()
-            cnt = cnt + 1
-            if cnt == 30:
-                print(
-                    "Unable to clean without deleting some connected components, attempting..."
-                )
-                break
-        if out_dict["connected_components_number"] > 1:
-            ms.generate_splitting_by_connected_components()
-            bestVol = 0
-            bestInd = 0
-            for j in range(out_dict["connected_components_number"]):
-                k = j + 1
-                curVol = (
-                    ms.mesh(k).bounding_box().dim_x()
-                    * ms.mesh(k).bounding_box().dim_y()
-                    * ms.mesh(k).bounding_box().dim_z()
-                )
-                if curVol > bestVol:
-                    bestInd = j + 1
-                    bestVol = curVol
-            ms.set_current_mesh(bestInd)
-        msTemp = pml.MeshSet()
-        msTemp.add_mesh(ms.current_mesh())
-        ms = msTemp
+        out_dict = try_manifold_repairs(ms, out_dict, cnt)
+        ms = keep_largest_component(ms, out_dict)
 
         cnt = 20
         while ms.current_mesh().face_number() < 10000:
