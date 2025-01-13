@@ -115,6 +115,62 @@ def final_topology_classification(
         print(f"{mesh}: Sphere", flush=True)
 
 
+def process_mesh(mesh):
+    print(mesh, flush=True)
+    ms = pml.MeshSet()
+
+    meshPath = os.path.join(MESH_DIR, mesh)
+    ms.load_new_mesh(meshPath)
+
+    ms.set_current_mesh(0)
+    # ms.meshing_remove_connected_component_by_diameter(mincomponentdiag=pml.Percentage(20))
+    out_dict = ms.get_topological_measures()
+
+    cnt = 0
+    out_dict = try_manifold_repairs(ms, out_dict, cnt)
+    keep_largest_component(ms, out_dict)
+    msTemp = pml.MeshSet()
+    msTemp.add_mesh(ms.current_mesh())
+    ms = msTemp
+
+    subdivide_if_needed(ms)
+
+    for j in range(NUM_SMOOTH):
+        ms.apply_coord_hc_laplacian_smoothing()
+
+    cnt = 0
+    out_dict = ms.get_topological_measures()
+    keep_largest_component(ms, out_dict)
+    msTemp = pml.MeshSet()
+    msTemp.add_mesh(ms.current_mesh())
+    ms = msTemp
+    ms = try_manifold_repairs(ms, cnt)
+    for prefix in [BAD_DIR, NOT_SIMPLY_CONNECTED_DIR, DISC_DIR, SPHERE_DIR]:
+        meshPath = os.path.join(prefix, mesh)
+        if os.path.isfile(meshPath):
+            os.remove(meshPath)
+
+    ms.meshing_close_holes(maxholesize=30, newfaceselected=True, selfintersection=True)
+    ms.meshing_surface_subdivision_loop(loopweight=1, iterations=2, selected=True)
+    ms.meshing_remove_unreferenced_vertices()
+    ms.meshing_remove_connected_component_by_diameter(
+        mincomponentdiag=pml.Percentage(20)
+    )
+    ms.meshing_close_holes(maxholesize=30, newfaceselected=True, selfintersection=True)
+    out_dict = ms.get_topological_measures()
+    keep_largest_component(ms, out_dict)
+    try:
+        msTemp = pml.MeshSet()
+        msTemp.add_mesh(ms.current_mesh())
+        ms = msTemp
+        final_topology_classification(
+            NOT_SIMPLY_CONNECTED_DIR, DISC_DIR, SPHERE_DIR, BAD_DIR, mesh, ms
+        )
+    except:
+        ms.save_current_mesh(os.path.join(BAD_DIR, mesh))
+        print(f"{mesh}: BadMesh", flush=True)
+
+
 if __name__ == "__main__":
     meshList = os.listdir(MESH_DIR)
     touch(OUTPUT_DIR)
@@ -125,65 +181,7 @@ if __name__ == "__main__":
 
     for mesh in meshList:
         try:
-            print(mesh, flush=True)
-            ms = pml.MeshSet()
-
-            meshPath = os.path.join(MESH_DIR, mesh)
-            ms.load_new_mesh(meshPath)
-
-            ms.set_current_mesh(0)
-            # ms.meshing_remove_connected_component_by_diameter(mincomponentdiag=pml.Percentage(20))
-            out_dict = ms.get_topological_measures()
-
-            cnt = 0
-            out_dict = try_manifold_repairs(ms, out_dict, cnt)
-            keep_largest_component(ms, out_dict)
-            msTemp = pml.MeshSet()
-            msTemp.add_mesh(ms.current_mesh())
-            ms = msTemp
-
-            subdivide_if_needed(ms)
-
-            for j in range(NUM_SMOOTH):
-                ms.apply_coord_hc_laplacian_smoothing()
-
-            cnt = 0
-            out_dict = ms.get_topological_measures()
-            keep_largest_component(ms, out_dict)
-            msTemp = pml.MeshSet()
-            msTemp.add_mesh(ms.current_mesh())
-            ms = msTemp
-            ms = try_manifold_repairs(ms, cnt)
-            for prefix in [BAD_DIR, NOT_SIMPLY_CONNECTED_DIR, DISC_DIR, SPHERE_DIR]:
-                meshPath = os.path.join(prefix, mesh)
-                if os.path.isfile(meshPath):
-                    os.remove(meshPath)
-
-            ms.meshing_close_holes(
-                maxholesize=30, newfaceselected=True, selfintersection=True
-            )
-            ms.meshing_surface_subdivision_loop(
-                loopweight=1, iterations=2, selected=True
-            )
-            ms.meshing_remove_unreferenced_vertices()
-            ms.meshing_remove_connected_component_by_diameter(
-                mincomponentdiag=pml.Percentage(20)
-            )
-            ms.meshing_close_holes(
-                maxholesize=30, newfaceselected=True, selfintersection=True
-            )
-            out_dict = ms.get_topological_measures()
-            keep_largest_component(ms, out_dict)
-            try:
-                msTemp = pml.MeshSet()
-                msTemp.add_mesh(ms.current_mesh())
-                ms = msTemp
-                final_topology_classification(
-                    NOT_SIMPLY_CONNECTED_DIR, DISC_DIR, SPHERE_DIR, BAD_DIR, mesh, ms
-                )
-            except:
-                ms.save_current_mesh(os.path.join(BAD_DIR, mesh))
-                print(f"{mesh}: BadMesh", flush=True)
+            process_mesh(mesh)
         except Exception as e:
             print(f"Error loading mesh: {e}", flush=True)
             continue
