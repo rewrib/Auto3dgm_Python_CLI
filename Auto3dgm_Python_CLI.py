@@ -14,9 +14,84 @@ import numpy.matlib
 import pandas as pd
 import psutil
 import trimesh
+import argparse
 
 import auto3dgm_nazar
 from auto3dgm_nazar.mesh.meshfactory import MeshFactory
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="CLI script to compare 3D meshes (talus bones) using Auto3dgm + Procrustes distance."
+    )
+    parser.add_argument(
+        "--db",
+        required=True,
+        help="Path to the SQLite database (same used in Script 2).",
+    )
+    parser.add_argument(
+        "--mesh-dir",
+        required=False,
+        default="",
+        help=(
+            "Optional directory path for raw mesh files. "
+            "If omitted, we assume 'downloads.file_name' is already a valid path."
+        ),
+    )
+    parser.add_argument(
+        "--num-subsample-low",
+        type=int,
+        default=100,
+        help="Number of subsampled points for low-resolution alignment.",
+    )
+    parser.add_argument(
+        "--num-subsample-high",
+        type=int,
+        default=200,
+        help="Number of subsampled points for high-resolution alignment.",
+    )
+    parser.add_argument(
+        "--reflection",
+        action="store_true",
+        help="Enable reflection during alignment (mirror=True).",
+    )
+    return parser.parse_args()
+
+def setup_database(db_file: str):
+    """
+    Create or update the SQLite database for storing Procrustes results.
+    We assume the 'downloads' table already exists.
+    We'll create 'auto3dgm_relationships' and 'auto3dgm_species_pair_medians'.
+    """
+    conn = sqlite3.connect(db_file)
+    cur = conn.cursor()
+
+    # Store pairwise Procrustes distances in a new table.
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS auto3dgm_relationships (
+            id1 INTEGER,  -- references downloads.id
+            id2 INTEGER,  -- references downloads.id
+            procrustes_distance REAL,
+            UNIQUE(id1, id2)
+        )
+        """
+    )
+
+    # Cross-species median distances (like in script 2, but for 3D meshes).
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS auto3dgm_species_pair_medians (
+            taxonomy1 TEXT,
+            taxonomy2 TEXT,
+            median_distance REAL,
+            UNIQUE(taxonomy1, taxonomy2)
+        )
+        """
+    )
+
+    conn.commit()
+    return conn, cur
 
 # Set up GUI
 SPAN_WIDTH = 3
@@ -313,6 +388,130 @@ class interface:
         with open("settings.json") as json_file:
             self.settings = json.load(json_file)
 
+        # Convert files to .ply, .off files won't work
+        self.convert()
+
+        mesh_dir = self.settings["mesh_dir"]
+        num_subsample = self.settings["num_subsample"]
+        seed = self.settings["seed"]
+
+        dataset_coll = auto3dgm_nazar.dataset.datasetfactory.DatasetFactory.ds_from_dir(
+            mesh_dir
+        )
+        self.originalMeshes = dataset_coll.datasets[0]
+
+        print("Subsampling meshes", flush=True)
+        sample_time = time.time()
+        if seed:
+            ss = auto3dgm_nazar.mesh.subsample.Subsample(
+                pointNumber=num_subsample,
+                meshes=self.originalMeshes,
+                seed=seed,
+                center_scale=False,
+            )
+        else:
+            ss = auto3dgm_nazar.mesh.subsample.Subsample(
+                pointNumber=num_subsample,
+                meshes=self.originalMeshes,
+                center_scale=False,
+            )
+        self.subsample = ss
+
+        ss_res = ss.ret
+
+        low_res_meshes = []
+        numFail = 0
+        for name, mesh in ss_res[num_subsample[0]]["output"].items():
+            mesh.name = name
+            newMesh = MeshFactory.mesh_from_data(
+                mesh.koodinimi, center_scale=True, name=mesh.name
+            )
+            low_res_meshes.append(newMesh)
+
+        self.sampledMeshes = []
+        for name, mesh in ss_res[num_subsample[1]]["output"].items():
+            mesh.name = name
+            newMesh = MeshFactory.mesh_from_data(
+                mesh.koodinimi, center_scale=True, name=mesh.name
+            )
+            self.sampledMeshes.append(newMesh)
+        sample_time = time.time() - sample_time
+        print("--- %s seconds for sampling meshes ---" % (sample_time), flush=True)
+        print("Finished sampling", flush=True)
+
+        # Align low resolution meshes
+        print("Aligning low resolution meshes")
+        low_res_time = time.time()
+        mirror = self.settings["reflection"]
+        corr = auto3dgm_nazar.analysis.correspondence.Correspondence(
+            meshes=low_res_meshes, mirror=mirror
+        )
+        low_res_time = time.time() - low_res_time
+        print("--- %s seconds for low resolution meshes ---" % (low_res_time))
+
+        # Align high resolution meshes
+        print("Aligning high resolution meshes", flush=True)
+        high_res_time = time.time()
+        ga = corr.globalized_alignment
+        self.alignData = auto3dgm_nazar.analysis.correspondence.Correspondence(
+            meshes=self.sampledMeshes, mirror=mirror, initial_alignment=ga
+        )
+        high_res_time = time.time() - high_res_time
+        print("--- %s seconds for sampling meshes ---" % (sample_time), flush=True)
+        print(
+            "--- %s seconds for low resolution meshes ---" % (low_res_time), flush=True
+        )
+        print(
+            "--- %s seconds for high resolution meshes ---" % (high_res_time),
+            flush=True,
+        )
+        print("Saving aligned meshes")
+
+        # Make output directory if it doesn't exist
+        output_dir = self.settings["output_dir"] + "alignedMeshes/"
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        viewer_dir = os.getcwd() + "/viewer/aligned_meshes/"
+        if not os.path.exists(viewer_dir):
+            os.makedirs(viewer_dir)
+        # Clear any previous meshes in the viewer folder
+        for f in os.listdir(viewer_dir):
+            os.remove(os.path.join(viewer_dir, f))
+
+        # normalize and export meshes
+        time_save = time.time()
+        for t in range(len(self.originalMeshes)):
+            R = self.alignData.globalized_alignment["r"][t]
+
+            verts = self.originalMeshes[t].vertices
+            faces = self.originalMeshes[t].faces
+            name = self.originalMeshes[t].name
+
+            vertices = np.transpose(np.matmul(R, np.transpose(verts)))
+            faces = faces.astype("int64")
+
+            # aligned_mesh=auto3dgm_nazar.mesh.meshfactory.MeshFactory.mesh_from_data(vertices, faces=faces, name=name, center_scale=True, deep=True)
+            # MeshExport.writeToFile(output_dir, aligned_mesh, format='ply')
+            # aligned_mesh.name = aligned_mesh.name.replace("_", "-")
+            # MeshExport.writeToFile(viewer_dir, aligned_mesh, format='obj')
+
+            # mesh_from_data doesn't create faces, so I used this workaround
+            aligned_mesh = trimesh.Trimesh(
+                vertices=vertices, faces=faces, process=False
+            )
+            if np.linalg.det(R) < 0:
+                aligned_mesh.faces = aligned_mesh.faces[:, [0, 2, 1]]
+            aligned_mesh, _ = self.Centralize(aligned_mesh, scale=None)
+            aligned_mesh.export(output_dir + name + ".ply")
+            name = name.replace("_", "-")
+            aligned_mesh, _ = self.Centralize(aligned_mesh, scale=1)
+            aligned_mesh.export(viewer_dir + name + ".obj")
+
+        print("Total time to save", time.time() - time_save)
+        print("Aligned meshes saved \n")
+        self.root.quit()
+
     # Controller to run loading bar and alignment concurrently
     def alignMeshController(self):
         self.root.destroy()
@@ -341,6 +540,9 @@ class interface:
         print("--- %s seconds total run time ---" % (total_time), flush=True)
 
         self.complete()
+
+    
+
 
     # Taken from auto3dgm slicer code
     def landmarksFromPseudoLandmarks(
@@ -417,33 +619,6 @@ class interface:
         dfUnscaledLandmarks.to_csv(
             os.path.join(output, "landmarks_unscaled.csv"), index=False
         )
-
-
-        #--------------------------------------------------------------------------
-        # 3) WRITE JSON FILES FOR USE WITH THREE.JS (or other JS frameworks)
-        #    One JSON file per mesh, containing the landmark coordinates.
-        #--------------------------------------------------------------------------
-        # SCALED landmarks
-        for l in landmarks:
-            json_data = {
-                "name": l.name,
-                # Convert NumPy array to a regular Python list
-                # so it can be JSON-serialized.
-                "landmarks": l.vertices.tolist()
-            }
-            json_filename = os.path.join(exportFolder, l.name + ".json")
-            with open(json_filename, 'w') as f:
-                json.dump(json_data, f, indent=2)
-
-        # UNSCALED landmarks
-        for l in unscaledLandmarks:
-            json_data = {
-                "name": l.name,
-                "landmarks": l.vertices.tolist()
-            }
-            json_filename = os.path.join(unscaleOutput, l.name + ".json")
-            with open(json_filename, 'w') as f:
-                json.dump(json_data, f, indent=2)
 
         # Write morphologika
         fid = open(os.path.join(output, "morphologika_scaled.txt"), "w")
@@ -654,35 +829,6 @@ class interface:
         # Open the web browser
         webbrowser.open("http://localhost:{}/auto3dgm.html".format(PORT))
 
-# Controller to run loading bar and alignment concurrently
-    def openServer(self):
-        self.root.destroy()
-        self.root = tk.Tk()
-        total_time = time.time()
-        # self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-
-        t1 = threading.Thread(target=self.visualize, args=())
-        t1.start()
-        self.startLoading("visualizing")  # This will block while the mainloop runs
-        t1.join()
-
-        # output = self.settings["output_dir"]
-        # output_landmarks = output + "landmarks/"
-        # output_rotations = output + "rotations/"
-        # if not os.path.exists(output_landmarks):
-        #     os.makedirs(output_landmarks)
-        # if not os.path.exists(output_rotations):
-        #     os.makedirs(output_rotations)
-
-        # self.exportAlignedLandmarksNew(output)
-        # self.exportRotationsScaleTranslation(output)
-        # self.exportScaleInfo(output)
-        # self.exportRotations(output_rotations)
-        total_time = time.time() - total_time
-        print("--- %s seconds total run time ---" % (total_time), flush=True)
-
-        self.complete()
-
     # Opens dialog for viewing mesh or exiting
     def complete(self):
         self.clear()
@@ -714,9 +860,10 @@ class interface:
 
 
 if __name__ == "__main__":
+    args = parse_args()
+    conn, cur = setup_database(args.db)
     inter = interface()
-    #inter.setSettings()
+    inter.setSettings()
     # inter.root.protocol("WM_DELETE_WINDOW", inter.on_closing)
     # inter.alignMeshController()
-    #inter.root.mainloop()
     inter.openServer()
