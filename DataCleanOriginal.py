@@ -14,8 +14,11 @@ logger = logging.getLogger(__name__)
 # INPUT
 # path to meshes
 # PLEASE ADD SLASHES AS APPROPRIATE FOR OS
-MESH_DIR = r"D:\Uni\BA\output\Morphosource\Meshes2"
-OUTPUT_DIR = r"D:\Uni\BA\output\Morphosource\Meshes3_cleaned"
+#MESH_DIR = r"D:\Uni\BA\output\Morphosource\Meshes2"
+#OUTPUT_DIR = r"D:\Uni\BA\output\Morphosource\Meshes3_cleaned"
+
+MESH_DIR = r"/home/batest/Projects/BA/output/Morphosource/Meshes2/"
+OUTPUT_DIR = r"/home/batest/Projects/BA/output/Morphosource/Meshes6_cleaned/"
 
 
 NOT_SIMPLY_CONNECTED_DIR = os.path.join(OUTPUT_DIR, "NotSimplyConnected")
@@ -35,96 +38,82 @@ def touch(newDir):
 
 def process_mesh(mesh):
     logger.info(f"Processing mesh: {mesh}")
-    print(meshList[mesh], flush=True)
     ms = pml.MeshSet()
     try:
-        ms.load_new_mesh(MESH_DIR + meshList[mesh])
+        ms.load_new_mesh(MESH_DIR + mesh)
     except:
-        continue
+        # TODO: check logic
+        return
     ms.set_current_mesh(0)
     # ms.meshing_remove_connected_component_by_diameter(mincomponentdiag=pml.Percentage(20))
     out_dict = ms.get_topological_measures()
 
-    cnt = 0
-    while not out_dict["is_mesh_two_manifold"]:
-        ms.meshing_repair_non_manifold_edges(method=0)
-        ms.meshing_repair_non_manifold_vertices(vertdispratio=0)
-        ms.meshing_remove_unreferenced_vertices()
-        ms.meshing_remove_duplicate_faces()
-        ms.meshing_remove_duplicate_vertices()
-        try:
-            ms.meshing_close_holes(
-                maxholesize=50, newfaceselected=True, selfintersection=True
-            )
-        except:
-            continue
-
-        out_dict = ms.get_topological_measures()
-        cnt = cnt + 1
-        if cnt == 30:
-            print(
-                "Unable to clean without deleting some connected components, attempting..."
-            )
-            break
-    if out_dict["connected_components_number"] > 1:
-        ms.generate_splitting_by_connected_components()
-        bestVol = 0
-        bestInd = 0
-        for j in range(out_dict["connected_components_number"]):
-            k = j + 1
-            curVol = (
-                ms.mesh(k).bounding_box().dim_x()
-                * ms.mesh(k).bounding_box().dim_y()
-                * ms.mesh(k).bounding_box().dim_z()
-            )
-            if curVol > bestVol:
-                bestInd = j + 1
-                bestVol = curVol
-        ms.set_current_mesh(bestInd)
+    out_dict = try_manifold_repairs(ms, out_dict)
+    keep_largest_component(ms, out_dict)
     msTemp = pml.MeshSet()
     msTemp.add_mesh(ms.current_mesh())
     ms = msTemp
 
-    cnt = 20
-    while ms.current_mesh().face_number() < 10000:
-        ms.meshing_surface_subdivision_loop(
-            loopweight=1, iterations=1, threshold=pml.Percentage(0)
-        )
-        cnt = cnt - 1
-        if cnt == 0:
-            break
-    ms.meshing_decimation_quadric_edge_collapse(targetfacenum=10000, autoclean=True)
-
+    subdivide_if_needed(ms)
+    logger.info(f"Smoothing the mesh {NUM_SMOOTH} time(s).")
     for j in range(NUM_SMOOTH):
         ms.apply_coord_hc_laplacian_smoothing()
 
-    cnt = 0
     out_dict = ms.get_topological_measures()
-    if out_dict["connected_components_number"] > 1:
-        ms.generate_splitting_by_connected_components()
-        bestVol = 0
-        bestInd = 0
-        for j in range(out_dict["connected_components_number"]):
-            k = j + 1
-            curVol = (
-                ms.mesh(k).bounding_box().dim_x()
-                * ms.mesh(k).bounding_box().dim_y()
-                * ms.mesh(k).bounding_box().dim_z()
-            )
-            if curVol > bestVol:
-                bestInd = j + 1
-                bestVol = curVol
-        ms.set_current_mesh(bestInd)
+    keep_largest_component(ms, out_dict)
     msTemp = pml.MeshSet()
     msTemp.add_mesh(ms.current_mesh())
     ms = msTemp
     out_dict = ms.get_topological_measures()
+    ms = more_manifold_repairs(ms, out_dict)
+    for prefix in [BAD_DIR, NOT_SIMPLY_CONNECTED_DIR, DISC_DIR, SPHERE_DIR]:
+        if os.path.isfile(prefix + mesh):
+            os.remove(prefix + mesh)
+
+    logger.info("Closing holes with max size=30 on selected faces.")
+    ms.meshing_close_holes(maxholesize=30, newfaceselected=True, selfintersection=True)
+    logger.info("Surface subdivision on selected faces (2 iterations).")
+    ms.meshing_surface_subdivision_loop(loopweight=1, iterations=2, selected=True)
+    logger.info("Removing unreferenced vertices.")
+    ms.meshing_remove_unreferenced_vertices()
+    logger.info("Removing small connected components by diameter (20%).")
+    ms.meshing_remove_connected_component_by_diameter(
+        mincomponentdiag=pml.Percentage(20)
+    )
+
+    logger.info("Closing holes again (max size=30).")
+    ms.meshing_close_holes(maxholesize=30, newfaceselected=True, selfintersection=True)
+    out_dict = ms.get_topological_measures()
+    keep_largest_component(ms, out_dict)
+    try:
+        msTemp = pml.MeshSet()
+        msTemp.add_mesh(ms.current_mesh())
+        ms = msTemp
+        ms.meshing_re_orient_faces_coherentely()
+        out_dict = ms.get_topological_measures()
+
+        if out_dict["connected_components_number"] > 1:
+            ms.save_current_mesh(os.path.join(BAD_DIR, mesh))
+            logger.info(mesh + ":ConnectedComponentIssue")
+        elif out_dict["genus"] > 0:
+            ms.save_current_mesh(os.path.join(NOT_SIMPLY_CONNECTED_DIR, mesh))
+            logger.info(mesh + ":NotSimplyConnected")
+        elif out_dict["boundary_edges"] > 0:
+            ms.save_current_mesh(os.path.join(DISC_DIR, mesh))
+            logger.info(mesh + ":Disc")
+        else:
+            ms.save_current_mesh(os.path.join(SPHERE_DIR, mesh))
+            logger.info(mesh + ":Sphere")
+    except Exception as exc:
+        logger.error(f"Exception during final classification: {exc}")
+        logger.info(f"{mesh}: BadMesh -> Saving to {BAD_DIR}.")
+        ms.save_current_mesh(os.path.join(BAD_DIR, mesh))
+
+
+def more_manifold_repairs(ms, out_dict):
+    cnt = 0
     while not out_dict["is_mesh_two_manifold"]:
-        ms.meshing_repair_non_manifold_edges(method=0)
-        ms.meshing_repair_non_manifold_vertices(vertdispratio=0)
-        ms.meshing_remove_unreferenced_vertices()
-        ms.meshing_remove_duplicate_faces()
-        ms.meshing_remove_duplicate_vertices()
+        repair_mesh(ms)
         if out_dict["connected_components_number"] > 1:
             ms.generate_splitting_by_connected_components()
             bestVol = 0
@@ -149,19 +138,25 @@ def process_mesh(mesh):
         if cnt == 10:
             out_dict
             break
-    for prefix in [BAD_DIR, NOT_SIMPLY_CONNECTED_DIR, DISC_DIR, SPHERE_DIR]:
-        if os.path.isfile(prefix + meshList[mesh]):
-            os.remove(prefix + meshList[mesh])
+    return ms
 
-    ms.meshing_close_holes(maxholesize=30, newfaceselected=True, selfintersection=True)
-    ms.meshing_surface_subdivision_loop(loopweight=1, iterations=2, selected=True)
-    ms.meshing_remove_unreferenced_vertices()
-    ms.meshing_remove_connected_component_by_diameter(
-        mincomponentdiag=pml.Percentage(20)
-    )
-    ms.meshing_close_holes(maxholesize=30, newfaceselected=True, selfintersection=True)
-    out_dict = ms.get_topological_measures()
+def subdivide_if_needed(ms):
+    cnt = 20
+    while ms.current_mesh().face_number() < 10000:
+        ms.meshing_surface_subdivision_loop(
+            loopweight=1, iterations=1, threshold=pml.Percentage(0)
+        )
+        cnt = cnt - 1
+        if cnt == 0:
+            break
+    logger.info("Decimating to target face count = 10000.")
+    ms.meshing_decimation_quadric_edge_collapse(targetfacenum=10000, autoclean=True)
+
+def keep_largest_component(ms, out_dict):
     if out_dict["connected_components_number"] > 1:
+        logger.info(
+            f"Found {out_dict['connected_components_number']} connected components. Splitting..."
+        )
         ms.generate_splitting_by_connected_components()
         bestVol = 0
         bestInd = 0
@@ -175,29 +170,37 @@ def process_mesh(mesh):
             if curVol > bestVol:
                 bestInd = j + 1
                 bestVol = curVol
+        logger.info(f"Keeping largest component: #{bestInd}, volume={bestVol}")
         ms.set_current_mesh(bestInd)
-    try:
-        msTemp = pml.MeshSet()
-        msTemp.add_mesh(ms.current_mesh())
-        ms = msTemp
-        ms.meshing_re_orient_faces_coherentely()
-        out_dict = ms.get_topological_measures()
 
-        if out_dict["connected_components_number"] > 1:
-            ms.save_current_mesh(BAD_DIR + meshList[mesh])
-            print(meshList[mesh] + ":ConnectedComponentIssue", flush=True)
-        elif out_dict["genus"] > 0:
-            ms.save_current_mesh(NOT_SIMPLY_CONNECTED_DIR + meshList[mesh])
-            print(meshList[mesh] + ":NotSimplyConnected", flush=True)
-        elif out_dict["boundary_edges"] > 0:
-            ms.save_current_mesh(DISC_DIR + meshList[mesh])
-            print(meshList[mesh] + ":Disc", flush=True)
-        else:
-            ms.save_current_mesh(SPHERE_DIR + meshList[mesh])
-            print(meshList[mesh] + ":Sphere", flush=True)
-    except:
-        ms.save_current_mesh(BAD_DIR + meshList[mesh])
-        print(meshList[mesh] + ":BadMesh", flush=True)
+def try_manifold_repairs(ms, out_dict):
+    cnt = 0
+    while not out_dict["is_mesh_two_manifold"]:
+        logger.info("Mesh is not two-manifold. Attempting repairs.")
+        repair_mesh(ms)
+        try:
+            ms.meshing_close_holes(
+                maxholesize=50, newfaceselected=True, selfintersection=True
+            )
+        except Exception as ex:
+            logger.warning(f"Exception while closing holes: {ex}")
+            continue
+
+        out_dict = ms.get_topological_measures()
+        cnt = cnt + 1
+        if cnt == 30:
+            logger.warning(
+                "Unable to clean without deleting some connected components, attempting..."
+            )
+            break
+    return out_dict
+
+def repair_mesh(ms):
+    ms.meshing_repair_non_manifold_edges(method=0)
+    ms.meshing_repair_non_manifold_vertices(vertdispratio=0)
+    ms.meshing_remove_unreferenced_vertices()
+    ms.meshing_remove_duplicate_faces()
+    ms.meshing_remove_duplicate_vertices()
 
 
 if __name__ == "__main__":
@@ -210,13 +213,4 @@ if __name__ == "__main__":
     touch(BAD_DIR)
 
     for mesh in meshList:
-        process_mesh(
-            MESH_DIR,
-            NOT_SIMPLY_CONNECTED_DIR,
-            DISC_DIR,
-            SPHERE_DIR,
-            BAD_DIR,
-            NUM_SMOOTH,
-            meshList,
-            mesh,
-        )
+        process_mesh(mesh)
