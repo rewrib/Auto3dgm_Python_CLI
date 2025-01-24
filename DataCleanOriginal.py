@@ -14,11 +14,11 @@ logger = logging.getLogger(__name__)
 # INPUT
 # path to meshes
 # PLEASE ADD SLASHES AS APPROPRIATE FOR OS
-MESH_DIR = r"D:\Uni\BA\output\Morphosource\Meshes2"
-OUTPUT_DIR = r"D:\Uni\BA\output\Morphosource\Meshes3_cleaned"
+#MESH_DIR = r"D:\Uni\BA\output\Morphosource\Meshes2"
+#OUTPUT_DIR = r"D:\Uni\BA\output\Morphosource\Meshes3_cleaned"
 
-# MESH_DIR = r"/home/batest/Projects/BA/output/Morphosource/Meshes2/"
-# OUTPUT_DIR = r"/home/batest/Projects/BA/output/Morphosource/Meshes6_cleaned/"
+MESH_DIR = r"/home/batest/Projects/BA/output/Morphosource/Meshes2/"
+OUTPUT_DIR = r"/home/batest/Projects/BA/output/Morphosource/Meshes6_cleaned/"
 
 
 NOT_SIMPLY_CONNECTED_DIR = os.path.join(OUTPUT_DIR, "NotSimplyConnected")
@@ -40,10 +40,9 @@ def process_mesh(mesh):
     logger.info(f"Processing mesh: {mesh}")
     ms = pml.MeshSet()
     try:
-        ms.load_new_mesh(os.path.join(MESH_DIR, mesh))
-    except Exception as ex:
+        ms.load_new_mesh(MESH_DIR + mesh)
+    except:
         # TODO: check logic
-        logger.error(f"Exception while loading mesh: {ex}")
         return
     ms.set_current_mesh(0)
     # ms.meshing_remove_connected_component_by_diameter(mincomponentdiag=pml.Percentage(20))
@@ -68,19 +67,13 @@ def process_mesh(mesh):
     out_dict = ms.get_topological_measures()
     ms = more_manifold_repairs(ms, out_dict)
     for prefix in [BAD_DIR, NOT_SIMPLY_CONNECTED_DIR, DISC_DIR, SPHERE_DIR]:
-        if os.path.isfile(os.path.join(prefix, mesh)):
-            os.remove(os.path.join(prefix, mesh))
+        if os.path.isfile(prefix + mesh):
+            os.remove(prefix + mesh)
 
     logger.info("Closing holes with max size=30 on selected faces.")
     ms.meshing_close_holes(maxholesize=30, newfaceselected=True, selfintersection=True)
     logger.info("Surface subdivision on selected faces (2 iterations).")
-    try:
-        ms.meshing_surface_subdivision_loop(loopweight=1, iterations=2, selected=True)
-    except Exception as ex:
-        logger.warning(f"Exception during surface subdivision: {ex}")
-        logger.info(f"{mesh}: BadMesh -> Saving to {BAD_DIR}.")
-        ms.save_current_mesh(os.path.join(BAD_DIR, mesh))
-        return
+    ms.meshing_surface_subdivision_loop(loopweight=1, iterations=2, selected=True)
     logger.info("Removing unreferenced vertices.")
     ms.meshing_remove_unreferenced_vertices()
     logger.info("Removing small connected components by diameter (20%).")
@@ -147,7 +140,6 @@ def more_manifold_repairs(ms, out_dict):
             break
     return ms
 
-
 def subdivide_if_needed(ms):
     cnt = 20
     while ms.current_mesh().face_number() < 10000:
@@ -159,7 +151,6 @@ def subdivide_if_needed(ms):
             break
     logger.info("Decimating to target face count = 10000.")
     ms.meshing_decimation_quadric_edge_collapse(targetfacenum=10000, autoclean=True)
-
 
 def keep_largest_component(ms, out_dict):
     if out_dict["connected_components_number"] > 1:
@@ -182,7 +173,6 @@ def keep_largest_component(ms, out_dict):
         logger.info(f"Keeping largest component: #{bestInd}, volume={bestVol}")
         ms.set_current_mesh(bestInd)
 
-
 def try_manifold_repairs(ms, out_dict):
     cnt = 0
     while not out_dict["is_mesh_two_manifold"]:
@@ -194,7 +184,7 @@ def try_manifold_repairs(ms, out_dict):
             )
         except Exception as ex:
             logger.warning(f"Exception while closing holes: {ex}")
-            continue
+            return
 
         out_dict = ms.get_topological_measures()
         cnt = cnt + 1
@@ -204,7 +194,6 @@ def try_manifold_repairs(ms, out_dict):
             )
             break
     return out_dict
-
 
 def repair_mesh(ms):
     ms.meshing_repair_non_manifold_edges(method=0)
