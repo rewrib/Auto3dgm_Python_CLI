@@ -5,7 +5,7 @@ import time
 import pymeshlab as pml
 
 MESH_DIR = r"D:\Uni\BA\output\Morphosource\Meshes2"
-OUTPUT_DIR = r"D:\Uni\BA\output\Morphosource\Meshes3_cleaned_logging"
+OUTPUT_DIR = r"D:\Uni\BA\output\Morphosource\Meshes4_cleaned_logging"
 
 
 NOT_SIMPLY_CONNECTED_DIR = os.path.join(OUTPUT_DIR, "NotSimplyConnected")
@@ -53,10 +53,14 @@ for mesh in meshList:
             continue
         ms.set_current_mesh(0)
         # ms.meshing_remove_connected_component_by_diameter(mincomponentdiag=pml.Percentage(20))
+        logger.info("Checking topology...")
         out_dict = ms.get_topological_measures()
 
         cnt = 0
         while not out_dict["is_mesh_two_manifold"]:
+            logger.info(
+                f"Attempting to repair non-manifold issues (iteration {cnt + 1})..."
+            )
             ms.meshing_repair_non_manifold_edges(method=0)
             ms.meshing_repair_non_manifold_vertices(vertdispratio=0)
             ms.meshing_remove_unreferenced_vertices()
@@ -74,10 +78,13 @@ for mesh in meshList:
             cnt = cnt + 1
             if cnt == 30:
                 logger.warning(
-                    f"{mesh}: Unable to clean without deleting connected components after {cnt} iterations. Attempting anyway..."
+                    f"Stopping repairs after {cnt} iterations for mesh {mesh}."
                 )
                 break
         if out_dict["connected_components_number"] > 1:
+            logger.info(
+                f"Round 1: Mesh has multiple connected components: {out_dict['connected_components_number']}"
+            )
             ms.generate_splitting_by_connected_components()
             bestVol = 0
             bestInd = 0
@@ -96,6 +103,7 @@ for mesh in meshList:
         msTemp.add_mesh(ms.current_mesh())
         ms = msTemp
 
+        logger.info("Subdividing mesh to meet face count threshold...")
         cnt = 20
         while ms.current_mesh().face_number() < 10000:
             ms.meshing_surface_subdivision_loop(
@@ -104,14 +112,19 @@ for mesh in meshList:
             cnt = cnt - 1
             if cnt == 0:
                 break
+        logger.info("Applying decimation and smoothing...")
         ms.meshing_decimation_quadric_edge_collapse(targetfacenum=10000, autoclean=True)
 
         for j in range(NUM_SMOOTH):
             ms.apply_coord_hc_laplacian_smoothing()
 
+        logger.info("Performing final topology fixes...")
         cnt = 0
         out_dict = ms.get_topological_measures()
         if out_dict["connected_components_number"] > 1:
+            logger.info(
+                f"Round 2: Mesh has multiple connected components: {out_dict['connected_components_number']}"
+            )
             ms.generate_splitting_by_connected_components()
             bestVol = 0
             bestInd = 0
@@ -131,12 +144,16 @@ for mesh in meshList:
         ms = msTemp
         out_dict = ms.get_topological_measures()
         while not out_dict["is_mesh_two_manifold"]:
+            logger.info(f"Fixing non-manifold issues (iteration {cnt + 1})...")
             ms.meshing_repair_non_manifold_edges(method=0)
             ms.meshing_repair_non_manifold_vertices(vertdispratio=0)
             ms.meshing_remove_unreferenced_vertices()
             ms.meshing_remove_duplicate_faces()
             ms.meshing_remove_duplicate_vertices()
             if out_dict["connected_components_number"] > 1:
+                logger.info(
+                    f"Round 3: Mesh has multiple connected components: {out_dict['connected_components_number']}"
+                )
                 ms.generate_splitting_by_connected_components()
                 bestVol = 0
                 bestInd = 0
@@ -181,6 +198,9 @@ for mesh in meshList:
         )
         out_dict = ms.get_topological_measures()
         if out_dict["connected_components_number"] > 1:
+            logger.info(
+                f"Round 4: Mesh has multiple connected components: {out_dict['connected_components_number']}"
+            )
             ms.generate_splitting_by_connected_components()
             bestVol = 0
             bestInd = 0
@@ -196,6 +216,7 @@ for mesh in meshList:
                     bestVol = curVol
             ms.set_current_mesh(bestInd)
         try:
+            logger.info("Classifying and saving mesh...")
             msTemp = pml.MeshSet()
             msTemp.add_mesh(ms.current_mesh())
             ms = msTemp
