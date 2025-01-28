@@ -498,16 +498,32 @@ class interface:
         return meshes
 
     def exportAlignedLandmarksNew(self, output):
+        """
+        Exports two types of landmarks:
+        1) 'scaled_landmarks': The landmarks that have been centered and unit-scaled
+        2) 'unscaled_landmarks': The landmarks that have been rotated/aligned but preserve original mesh scale
+
+        In addition, exports to:
+        - CSV files (landmarks_scaled.csv, landmarks_unscaled.csv)
+        - FCSV files (per-mesh)
+        - Morphologika format
+        - JSON files (one per mesh) that can be used in JavaScript with Three.js
+        """
+
         exportFolder = output + "scaled_landmarks/"
         unscaleOutput = output + "unscaled_landmarks/"
         self.touch(unscaleOutput)
         self.touch(exportFolder)
+
         m = self.sampledMeshes
         r = self.alignData.globalized_alignment["r"]
         p = self.alignData.globalized_alignment["p"]
         landmarks = self.landmarksFromPseudoLandmarks(m, p, r, origScale=False)
         unscaledLandmarks = self.landmarksFromPseudoLandmarks(m, p, r, origScale=True)
 
+        # --------------------------------------------------------------------------
+        # 1) CREATE & SAVE A CSV SUMMARY FOR SCALED LANDMARKS
+        # --------------------------------------------------------------------------
         # Create Pandas Dataframe
         colNames = ["Name"]
         for i in range(1, len(landmarks[0].vertices) + 1):
@@ -528,6 +544,9 @@ class interface:
         # Save landmarks
         dfLandmarks.to_csv(os.path.join(output, "landmarks_scaled.csv"), index=False)
 
+        # --------------------------------------------------------------------------
+        # 2) CREATE & SAVE A CSV SUMMARY FOR UNSCALED LANDMARKS
+        # --------------------------------------------------------------------------
         dfUnscaledLandmarks = pd.DataFrame(columns=colNames)
 
         for l in unscaledLandmarks:
@@ -626,6 +645,8 @@ class interface:
                     + "\n"
                 )
         fid.close()
+
+        print("Landmarks exported (FCSV, CSV, Morphologika, and JSON).")
 
     # Exports landmarks
     def exportAlignedLandmarks(self, exportFolder):
@@ -834,8 +855,8 @@ class interface:
 
 if __name__ == "__main__":
     inter = interface()
-    inter.setSettings()
+    # inter.setSettings()
     # inter.root.protocol("WM_DELETE_WINDOW", inter.on_closing)
     # inter.alignMeshController()
-    inter.root.mainloop()
-    # inter.openServer()
+    # inter.root.mainloop()
+    inter.openServer()
