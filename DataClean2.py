@@ -1,16 +1,11 @@
-# INPUT
-# path to meshes
-# PLEASE ADD SLASHES AS APPROPRIATE FOR OS
-
-# path to cleaned meshes
-
-
+import logging
 import os
+import time
 
 import pymeshlab as pml
 
 MESH_DIR = r"D:\Uni\BA\output\Morphosource\Meshes2"
-OUTPUT_DIR = r"D:\Uni\BA\output\Morphosource\Meshes3_cleaned"
+OUTPUT_DIR = r"D:\Uni\BA\output\Morphosource\Meshes3_cleaned_logging"
 
 
 NOT_SIMPLY_CONNECTED_DIR = os.path.join(OUTPUT_DIR, "NotSimplyConnected")
@@ -20,6 +15,14 @@ SPHERE_DIR = os.path.join(OUTPUT_DIR, "SphereTopology")
 BAD_DIR = os.path.join(OUTPUT_DIR, "BadMeshes")
 # number of smoothing iterations
 NUM_SMOOTH = 2
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
 
 def touch(newDir):
@@ -35,13 +38,14 @@ touch(SPHERE_DIR)
 touch(BAD_DIR)
 
 for mesh in meshList:
+    start_time = time.time()
+    logger.info(mesh)
     try:
-        print(mesh, flush=True)
         ms = pml.MeshSet()
         try:
             ms.load_new_mesh(os.path.join(MESH_DIR, mesh))
-        except:
-            print(mesh + ":LoadError", flush=True)
+        except Exception as e:
+            logger.error(f"{mesh}: LoadError ({e})")
             continue
         ms.set_current_mesh(0)
         # ms.meshing_remove_connected_component_by_diameter(mincomponentdiag=pml.Percentage(20))
@@ -58,14 +62,15 @@ for mesh in meshList:
                 ms.meshing_close_holes(
                     maxholesize=50, newfaceselected=True, selfintersection=True
                 )
-            except:
+            except Exception as e:
+                logger.warning(f"{mesh}: Hole closing error ({e}), continuing.")
                 continue
 
             out_dict = ms.get_topological_measures()
             cnt = cnt + 1
             if cnt == 30:
-                print(
-                    "Unable to clean without deleting some connected components, attempting..."
+                logger.warning(
+                    f"{mesh}: Unable to clean without deleting connected components after {cnt} iterations. Attempting anyway..."
                 )
                 break
         if out_dict["connected_components_number"] > 1:
@@ -149,6 +154,9 @@ for mesh in meshList:
 
             cnt = cnt + 1
             if cnt == 10:
+                logger.warning(
+                    f"{mesh}: Stopping manifold fixes after {cnt} iterations."
+                )
                 out_dict
                 break
 
@@ -192,19 +200,23 @@ for mesh in meshList:
 
             if out_dict["connected_components_number"] > 1:
                 ms.save_current_mesh(os.path.join(BAD_DIR, mesh))
-                print(mesh + ":ConnectedComponentIssue", flush=True)
+                logger.info(mesh + ":ConnectedComponentIssue")
             elif out_dict["genus"] > 0:
                 ms.save_current_mesh(os.path.join(NOT_SIMPLY_CONNECTED_DIR, mesh))
-                print(mesh + ":NotSimplyConnected", flush=True)
+                logger.info(mesh + ":NotSimplyConnected")
             elif out_dict["boundary_edges"] > 0:
                 ms.save_current_mesh(os.path.join(DISC_DIR, mesh))
-                print(mesh + ":Disc", flush=True)
+                logger.info(mesh + ":Disc")
             else:
                 ms.save_current_mesh(os.path.join(SPHERE_DIR, mesh))
-                print(mesh + ":Sphere", flush=True)
-        except:
+                logger.info(mesh + ":Sphere")
+        except Exception as e:
             ms.save_current_mesh(os.path.join(BAD_DIR, mesh))
-            print(mesh + ":BadMesh", flush=True)
-    except:
-        print(mesh + ":Error", flush=True)
+            logger.error(f"{mesh}:BadMesh \n {e}")
+    except Exception as e:
+        logger.error(f"{mesh}:Error: \n {e}")
         continue
+
+    end_time = time.time()
+    elapsed = end_time - start_time
+    logger.info(f"Finished processing mesh: {mesh} in {elapsed:.2f} seconds.\n")
