@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 #MESH_DIR = r"D:\Uni\BA\output\Morphosource\Meshes2"
 #OUTPUT_DIR = r"D:\Uni\BA\output\Morphosource\Meshes3_cleaned"
 
-MESH_DIR = r"/home/batest/Projects/BA/output/Morphosource/Meshes2/"
+MESH_DIR = r"/home/batest/Projects/BA/output/Morphosource/Meshes2/"y
 OUTPUT_DIR = r"/home/batest/Projects/BA/output/Morphosource/Meshes6_cleaned/"
 
 
