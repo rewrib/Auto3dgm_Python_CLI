@@ -15,14 +15,7 @@ SPHERE_DIR = os.path.join(OUTPUT_DIR, "SphereTopology")
 BAD_DIR = os.path.join(OUTPUT_DIR, "BadMeshes")
 # number of smoothing iterations
 NUM_SMOOTH = 2
-
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger(__name__)
+LOG_FILE_PATH = os.path.join(OUTPUT_DIR, "processing.log")
 
 
 def touch(newDir):
@@ -36,6 +29,17 @@ touch(NOT_SIMPLY_CONNECTED_DIR)
 touch(DISC_DIR)
 touch(SPHERE_DIR)
 touch(BAD_DIR)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.FileHandler(LOG_FILE_PATH),
+        logging.StreamHandler(),
+    ],
+)
+logger = logging.getLogger(__name__)
 
 for mesh in meshList:
     start_time = time.time()
