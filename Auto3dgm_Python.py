@@ -14,6 +14,8 @@ import numpy.matlib
 import pandas as pd
 import psutil
 import trimesh
+import sqlite3
+import statistics
 
 import auto3dgm_nazar
 from auto3dgm_nazar.mesh.meshfactory import MeshFactory
@@ -24,6 +26,8 @@ ENTRY_WIDTH = 23
 FILE_WIDTH = 63
 PADX = 10
 PADY = (0, 10)
+
+OUTPUT_DIR = r"/home/batest/Projects/BA/output/Morphosource/tkinter3/"
 
 
 # Opens file browser
@@ -498,32 +502,16 @@ class interface:
         return meshes
 
     def exportAlignedLandmarksNew(self, output):
-        """
-        Exports two types of landmarks:
-        1) 'scaled_landmarks': The landmarks that have been centered and unit-scaled
-        2) 'unscaled_landmarks': The landmarks that have been rotated/aligned but preserve original mesh scale
-
-        In addition, exports to:
-        - CSV files (landmarks_scaled.csv, landmarks_unscaled.csv)
-        - FCSV files (per-mesh)
-        - Morphologika format
-        - JSON files (one per mesh) that can be used in JavaScript with Three.js
-        """
-
         exportFolder = output + "scaled_landmarks/"
         unscaleOutput = output + "unscaled_landmarks/"
         self.touch(unscaleOutput)
         self.touch(exportFolder)
-
         m = self.sampledMeshes
         r = self.alignData.globalized_alignment["r"]
         p = self.alignData.globalized_alignment["p"]
         landmarks = self.landmarksFromPseudoLandmarks(m, p, r, origScale=False)
         unscaledLandmarks = self.landmarksFromPseudoLandmarks(m, p, r, origScale=True)
 
-        # --------------------------------------------------------------------------
-        # 1) CREATE & SAVE A CSV SUMMARY FOR SCALED LANDMARKS
-        # --------------------------------------------------------------------------
         # Create Pandas Dataframe
         colNames = ["Name"]
         for i in range(1, len(landmarks[0].vertices) + 1):
@@ -544,9 +532,6 @@ class interface:
         # Save landmarks
         dfLandmarks.to_csv(os.path.join(output, "landmarks_scaled.csv"), index=False)
 
-        # --------------------------------------------------------------------------
-        # 2) CREATE & SAVE A CSV SUMMARY FOR UNSCALED LANDMARKS
-        # --------------------------------------------------------------------------
         dfUnscaledLandmarks = pd.DataFrame(columns=colNames)
 
         for l in unscaledLandmarks:
@@ -645,8 +630,6 @@ class interface:
                     + "\n"
                 )
         fid.close()
-
-        print("Landmarks exported (FCSV, CSV, Morphologika, and JSON).")
 
     # Exports landmarks
     def exportAlignedLandmarks(self, exportFolder):
@@ -853,10 +836,235 @@ class interface:
         )
 
 
+
+
+
+# Adjust DB_FILE to point to your existing SQLite database that has the 'downloads' table.
+DB_FILE = r"/home/batest/Projects/BA/output/Morphosource/Database/downloads_metadata-test8.db"  # <<-- Adjust path as needed
+
+
+def setup_auto3dgm_tables():
+    """
+    Create tables for storing pairwise relationships and cross-species medians:
+      - auto3dgm_relationships
+      - auto3dgm_species_pair_medians
+
+    We reuse the 'downloads' table for the main mesh records (no new table for meshes).
+    """
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    # Table: auto3dgm_relationships
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS auto3dgm_relationships (
+            id1 INTEGER,
+            id2 INTEGER,
+            similarity REAL,
+            UNIQUE(id1, id2)
+        )
+        """
+    )
+
+    # Table: auto3dgm_species_pair_medians
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS auto3dgm_species_pair_medians (
+            taxonomy1 TEXT,
+            taxonomy2 TEXT,
+            median_similarity REAL,
+            UNIQUE(taxonomy1, taxonomy2)
+        )
+        """
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def load_landmarks_map(csv_path):
+    """
+    Parse 'landmarks_scaled.csv' and produce a dictionary that maps:
+       file_name_without_ext -> Nx3 np array of landmarks
+    Because downloads.file_name is something like 'Specimen123.ply'.
+    We'll strip the '.ply' extension and match it to the 'Name' column from CSV.
+    """
+    try:
+        df = pd.read_csv(csv_path)
+    except FileNotFoundError:
+        print(f"ERROR: {csv_path} not found. Cannot proceed with similarity.")
+        return {}
+
+    # Expect columns: [Name, X1, Y1, Z1, X2, Y2, Z2, ...]
+    # We'll reshape each row of landmark coords into Nx3, keyed by 'Name'.
+    landmarks_map = {}
+    for i in range(len(df)):
+        row = df.iloc[i]
+        name = str(row["Name"])  # e.g. "Talus_123"
+        # All coordinate values except the first column "Name"
+        coords = row.drop(labels=["Name"]).values.astype(float)
+        # Reshape to Nx3
+        coords_3d = coords.reshape(-1, 3)
+        # We'll store in a dict, e.g. landmarks_map["Talus_123"] = np.array(...)
+        landmarks_map[name] = coords_3d
+
+    return landmarks_map
+
+
+def compute_rms_distance(landmarksA, landmarksB):
+    """
+    Simple shape-distance measure: RMS distance across corresponding landmarks.
+    """
+    if landmarksA.shape != landmarksB.shape:
+        raise ValueError("Landmark arrays must have the same shape.")
+    diffs = landmarksA - landmarksB
+    squared = np.sum(diffs**2, axis=1)
+    mean_sq = np.mean(squared)
+    return np.sqrt(mean_sq)
+
+
+def distance_to_similarity(distance):
+    """
+    Convert a distance (>=0) to a similarity in [0..100].
+    For example: similarity = 100 / (1 + distance).
+    """
+    return 100.0 * (1.0 / (1.0 + distance))
+
+
+def insert_mesh_relationships(landmarks_map):
+    """
+    1) For each entry in 'downloads', parse out the base name (no .ply) 
+       to see if it exists in landmarks_map.
+    2) For all pairs of such entries, compute distance -> similarity,
+       and store in auto3dgm_relationships (id1, id2).
+    """
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    # Load all downloads, ignoring those that have no .ply in file_name or no match in landmarks_map
+    cur.execute("SELECT id, file_name, media_id FROM downloads")
+    rows = cur.fetchall()
+
+    # Build a list of (id, base_name, landmarks) for only those that match
+    # e.g. file_name="Specimen123.ply" => base="Specimen123"
+    # We'll see if that base_name is in landmarks_map
+    usable = []
+    for (dbid, file_name, media_id) in rows:
+        if not file_name:
+            continue
+        base = os.path.splitext(file_name)[0] + "-" + media_id  # remove extension if present
+        if base in landmarks_map:
+            usable.append((dbid, base, landmarks_map[base]))
+
+    # Pairwise comparison
+    for i in range(len(usable)):
+        id1, base1, lm1 = usable[i]
+        for j in range(i + 1, len(usable)):
+            id2, base2, lm2 = usable[j]
+
+            try:
+                dist = compute_rms_distance(lm1, lm2)
+                similarity = distance_to_similarity(dist)
+            except Exception as e:
+                print(f"Skipping pair {base1} - {base2} due to error: {e}")
+                similarity = 0.0
+
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO auto3dgm_relationships (id1, id2, similarity)
+                VALUES (?, ?, ?)
+                """,
+                (id1, id2, similarity),
+            )
+
+    conn.commit()
+    conn.close()
+
+
+def compute_species_pair_medians():
+    """
+    Compute median similarity for each pair of species (taxonomy1, taxonomy2)
+    from auto3dgm_relationships. We only reference downloads.taxonomy 
+    (i.e., downloads.id => auto3dgm_relationships.id1 or id2).
+    """
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    # Gather distinct taxonomies from downloads
+    cur.execute("""
+        SELECT DISTINCT taxonomy
+        FROM downloads
+        WHERE taxonomy != '' AND taxonomy IS NOT NULL
+    """)
+    species_list = [row[0] for row in cur.fetchall()]
+    species_list = sorted(species_list)
+
+    from itertools import combinations_with_replacement
+    species_pairs = list(combinations_with_replacement(species_list, 2))
+
+    for spA, spB in species_pairs:
+        # Find relationships where (id1 in spA) and (id2 in spB), or vice versa
+        # We'll do a UNION approach
+        cur.execute(
+            """
+            SELECT r.similarity
+            FROM auto3dgm_relationships r
+            JOIN downloads d1 ON r.id1 = d1.id
+            JOIN downloads d2 ON r.id2 = d2.id
+            WHERE d1.taxonomy = ? AND d2.taxonomy = ?
+
+            UNION
+
+            SELECT r.similarity
+            FROM auto3dgm_relationships r
+            JOIN downloads d1 ON r.id1 = d1.id
+            JOIN downloads d2 ON r.id2 = d2.id
+            WHERE d1.taxonomy = ? AND d2.taxonomy = ?
+            """,
+            (spA, spB, spB, spA),
+        )
+        similarities = [row[0] for row in cur.fetchall()]
+        if not similarities:
+            continue
+
+        median_val = statistics.median(similarities)
+        cur.execute(
+            """
+            INSERT INTO auto3dgm_species_pair_medians (taxonomy1, taxonomy2, median_similarity)
+            VALUES (?, ?, ?)
+            ON CONFLICT(taxonomy1, taxonomy2) DO UPDATE
+            SET median_similarity = excluded.median_similarity
+            """,
+            (spA, spB, median_val),
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def run_auto3dgm_db_integration():
+    """
+    1) Create new tables: auto3dgm_relationships, auto3dgm_species_pair_medians
+    2) Load scaled landmarks
+    3) Insert pairwise relationships
+    4) Compute cross-species medians
+    """
+    setup_auto3dgm_tables()
+    landmarks_map = load_landmarks_map(os.path.join(OUTPUT_DIR,"landmarks_scaled.csv"))
+    if not landmarks_map:
+        print("No landmarks loaded; skipping similarity calculations.")
+        return
+    insert_mesh_relationships(landmarks_map)
+    compute_species_pair_medians()
+    print("auto3dgm DB integration complete.")
+
+
+
 if __name__ == "__main__":
     inter = interface()
-    # inter.setSettings()
+    #inter.setSettings()
     # inter.root.protocol("WM_DELETE_WINDOW", inter.on_closing)
     # inter.alignMeshController()
-    # inter.root.mainloop()
-    inter.openServer()
+    #inter.root.mainloop()
+    # inter.openServer()
+    run_auto3dgm_db_integration()

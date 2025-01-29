@@ -5,14 +5,13 @@
     <title>auto3dgm</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
-
-    <!-- Using local or CDN references to Three.js, jQuery, etc. -->
-    <script src="js/libs/three.min.js"></script>
-    <script src="js/libs/jquery-2.1.4.min.js"></script>
+    <!--<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r73/three.js"></script>-->
+    <!--<script type="text/javascript" src="https://code.jquery.com/jquery-1.9.0.js"></script>-->
+    <script type="text/javascript" src="js/libs/three.min.js"></script>
+    <script type="text/javascript" src="js/libs/jquery-2.1.4.min.js"></script>
     <script src="js/Detector.js"></script>
     <script src="js/loaders/OBJLoader.js"></script>
     <script src="js/controls/TrackballControls.js"></script>
-
     <style>
         * {
             box-sizing: border-box;
@@ -23,6 +22,7 @@
             color: #000;
             font-family: Monospace;
             font-size: 13px;
+
             background-color: #fff;
             margin: 0px;
         }
@@ -31,9 +31,18 @@
             position: absolute;
             top: 0px;
             width: 80%;
+            // width: 1200px;
+            // z-index: 1;
+            /* padding: 3em 0 0 0; */
+            text-align: center;
             left: 10%;
             right: 10%;
-            text-align: center;
+            // margin: 0 10em 0 10em;
+            //margin: 0 auto;
+        }
+
+        a {
+            color: #0080ff;
         }
 
         #tccanvas {
@@ -46,6 +55,7 @@
         .list-item {
             display: inline-block;
             margin: 1em;
+            /* margin: 0 auto; */
             padding: 1em;
             box-shadow: 1px 2px 4px 0px rgba(0, 0, 0, 0.25);
         }
@@ -66,69 +76,96 @@
 </head>
 
 <body>
-    <!-- Main canvas for multi-viewport rendering -->
+    <!-- Div which will hold the Output -->
     <canvas id="tccanvas"></canvas>
-
-    <!-- Container for the "list items" (the stacked scenes) -->
-    <div id="content"></div>
-
-    <!-- Template snippet for each item we show on the page -->
+    <div id="content">
+    </div>
+    <!-- Javascript code that runs our Three.js examples -->
     <script id="template" type="notjs">
-    <div class="scene"></div>
-    <div class="description">$</div>
-  </script>
-
-    <script>
-        // If no WebGL, show a message
+     <div class="scene"></div>
+     <div class="description">$</div>
+    </script>
+    <script type="text/javascript">
         if (!Detector.webgl) Detector.addGetWebGLMessage();
 
         var canvas;
-        var scenes = [], camera, controls, renderer;
-        var dist;
+        var scenes = [], camera, control, renderer, dist;
+        var meshDir = "aligned_meshes/";
 
-        // Directories for meshes (.obj) and landmarks (.json)
-        var MESH_DIR = "aligned_meshes/";
-        var LANDMARKS_DIR = "scaled_landmarks/";
+        function loadMeshInDir(callback) {
+            $.ajax({
+                url: meshDir,
+                success: function (data) {
+                    $(data).find("a:contains(.obj)").each(function () {
+                        var meshName = $(this).attr("href");
+                        // callback(meshName);
+                        callback(meshDir + meshName);
+                    });
+                }
+            });
+        }
+
+        init();
+        animate();
 
         function init() {
-            // Grab main canvas
             canvas = document.getElementById("tccanvas");
 
-            // Create a WebGLRenderer
             renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
             renderer.setClearColor(0xFFFFFF);
 
-            // Our template for each .obj + .json pair
             var template = document.getElementById("template").text;
             var content = document.getElementById("content");
 
-            // Create a camera
+            var toothMaterial = new THREE.MeshPhongMaterial({ color: 0xCCCCCC, specular: 0x000000, shininess: 100, emissive: 0x000000, side: THREE.DoubleSide, shading: THREE.FlatShading }); // using THREE.FlatShading will render much faster than THREE.SmoothShading
+
+            var manager = new THREE.LoadingManager();
+            manager.onProgress = function (item, loaded, total) {
+                // console.log( item, loaded, total );
+                console.log(item + " loading complete");
+            };
+            // var texture = new THREE.Texture();
+
+            var onProgress = function (xhr) {
+                // if ( xhr.lengthComputable ) {
+                // var percentComplete = xhr.loaded / xhr.total * 100;
+                // console.log( Math.round(percentComplete, 2) + '% loaded' );
+                // }
+            };
+
+            var onError = function (xhr) {
+            };
+
             camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
+            // camera = new THREE.OrthographicCamera( window.innerWidth / -2, window.innerWidth / 2, window.innerHeight / 2, window.innerHeight / -2, 0.01, 10 );
             camera.position.z = -0.5;
 
-            // Add trackball controls
-            controls = new THREE.TrackballControls(camera, content);
-            controls.rotateSpeed = 6.0;
-            controls.zoomSpeed = 3.0;
-            controls.panSpeed = 0.8;
-            controls.staticMoving = true;
-            controls.dynamicDampingFactor = 0.3;
-            controls.addEventListener('change', render);
+            // add camera controls
+            control = new THREE.TrackballControls(camera, content);
+            control.rotateSpeed = 6.0;
+            control.zoomSpeed = 3.0;
+            control.panSpeed = 0.8;
+            control.noRotate = false;
+            control.noZoom = false;
+            control.noPan = false;
+            control.staticMoving = true;
+            control.dynamicDampingFactor = 0.3;
+            control.addEventListener('change', render);
 
-            // Start loading each .obj file in MESH_DIR
-            loadMeshesAndLandmarks(function (objPath, baseName) {
-                // 1) Create a new Scene
+            loadMeshInDir(function (meshPath) {
                 var scene = new THREE.Scene();
 
-                // 2) Create a container DIV
+                // make a list item
                 var element = document.createElement("div");
                 element.className = "list-item";
-                // Put the scene name in the description
-                element.innerHTML = template.replace('$', baseName);
+                var tmpSplit = meshPath.split('/');
+                element.innerHTML = template.replace('$', tmpSplit[tmpSplit.length - 1].split(".")[0]);
+
+                // Look up the element that represents the area
+                // we want to render the scene
                 scene.element = element.querySelector(".scene");
                 content.appendChild(element);
 
-                // 3) Lights
                 var ambient = new THREE.AmbientLight(0x333333);
                 var pointLight1 = new THREE.PointLight(0xffffff);
                 pointLight1.position.set(100, 100, 100);
@@ -138,118 +175,88 @@
                 scene.add(pointLight1);
                 scene.add(pointLight2);
 
-                // 4) Load the OBJ model
-                var toothMaterial = new THREE.MeshPhongMaterial({
-                    color: 0xCCCCCC,
-                    specular: 0x000000,
-                    shininess: 100,
-                    emissive: 0x000000,
-                    side: THREE.DoubleSide,
-                    flatShading: true    // or "shading: THREE.FlatShading" in older versions
-                });
-                var manager = new THREE.LoadingManager();
+                // model
                 var loader = new THREE.OBJLoader(manager);
-
-                loader.load(objPath, function (object) {
+                loader.load(meshPath, function (object) {
                     object.traverse(function (child) {
                         if (child instanceof THREE.Mesh) {
-                            // Center geometry, apply material
+                            // child.geometry = new THREE.Geometry().fromBufferGeometry( child.geometry );
+                            // child.geometry.mergeVertices();
+                            // child.geometry.computeVertexNormals();
+                            // child.geometry = new THREE.BufferGeometry().fromGeometry( child.geometry );
                             child.geometry.center();
                             child.material = toothMaterial;
                         }
                     });
                     scene.add(object);
-
-                    // Fit camera on first model loaded, if needed
-                    if (dist === undefined) {
-                        var bbox = new THREE.Box3().setFromObject(object);
+                    if (dist == undefined) {
+                        var bbox = new THREE.BoundingBoxHelper(object, 0xff0000);
+                        var bbox = new THREE.BoundingBoxHelper(object);
+                        bbox.update();
+                        // scene.add( bbox )
                         var diameterVec = new THREE.Vector3();
-                        diameterVec.subVectors(bbox.max, bbox.min);
+                        diameterVec.subVectors(bbox.box.max, bbox.box.min);
                         var center = new THREE.Vector3();
-                        center.addVectors(bbox.max, bbox.min).multiplyScalar(0.5);
-
+                        center.addVectors(bbox.box.max, bbox.box.min);
+                        center.divideScalar(2.0);
                         var cameraSceneCenter = new THREE.Vector3();
                         cameraSceneCenter.subVectors(camera.position, center);
+                        // camera.position.addVectors(center, cameraSceneCenter.normalize().multiplyScalar(diameterVec.length()))
+                        // camera.fov = 2 * Math.atan( diameterVec.length() / ( 2.0 * cameraSceneCenter.length() ) ) * ( 180.0 / Math.PI )
                         dist = diameterVec.length() / (2.0 * Math.tan(Math.PI / 8.0));
                         camera.position.addVectors(center, cameraSceneCenter.normalize().multiplyScalar(dist));
                         camera.lookAt(center);
                         camera.updateProjectionMatrix();
+                        camera.lookAt(scene.position);
                     }
-                });
+                }, onProgress, onError);
 
-                // 5) Load the JSON for Landmarks (matching baseName)
-                var jsonURL = LANDMARKS_DIR + baseName + ".json";
-                fetch(jsonURL)
-                    .then(response => {
-                        if (!response.ok) throw new Error("Failed to load " + jsonURL);
-                        return response.json();
-                    })
-                    .then(jsonData => {
-                        // Create a Points geometry from the "landmarks" array
-                        var positions = [];
-                        jsonData.landmarks.forEach(pt => {
-                            positions.push(pt[0], pt[1], pt[2]);
-                        });
-                        var landmarkGeom = new THREE.BufferGeometry();
-                        var positionAttr = new THREE.Float32BufferAttribute(positions, 3);
-                        landmarkGeom.setAttribute('position', positionAttr);
-
-                        // Create a Points Material
-                        var pointsMat = new THREE.PointsMaterial({
-                            color: 0xff0000,
-                            size: 0.005, // control size of each point
-                        });
-
-                        // Create and add points to the scene
-                        var points = new THREE.Points(landmarkGeom, pointsMat);
-                        scene.add(points);
-
-                    })
-                    .catch(err => {
-                        // It's okay if there's no matching JSON (or handle error).
-                        console.warn("Landmarks JSON not found for " + baseName);
-                    });
-
-                // 6) Keep track of this scene
                 scenes.push(scene);
-                render();
             });
 
             render();
         }
 
-        function loadMeshesAndLandmarks(onMeshFound) {
-            // Look in MESH_DIR to find all .obj files, then call 'onMeshFound' with each
-            $.ajax({
-                url: MESH_DIR,
-                success: function (data) {
-                    // For each anchor that contains ".obj", extract the filename
-                    $(data).find("a:contains(.obj)").each(function () {
-                        var meshFile = $(this).attr("href"); // e.g. MyMesh.obj
-                        var baseName = meshFile.split(".")[0]; // "MyMesh"
-                        onMeshFound(MESH_DIR + meshFile, baseName);
-                    });
-                }
-            });
+        function updateSize() {
+            var width = canvas.clientWidth;
+            var height = canvas.clientHeight;
+
+            if (canvas.width !== width || canvas.height != height) {
+                renderer.setSize(width, height, false);
+            }
+
+            control.handleResize();
         }
 
-        // Render all scenes as in your original multi-viewport approach
+        function animate() {
+            render();
+            requestAnimationFrame(animate);
+            control.update();
+        }
+
         function render() {
             updateSize();
+
             renderer.setClearColor(0xFFFFFF);
             renderer.clear(true);
             renderer.setClearColor(0xE0E0E0);
 
             renderer.enableScissorTest(true);
-            scenes.forEach(function (scene) {
+            scenes.forEach(function (scene, index) {
+                // get the element that is a place holder for where we want to
+                // draw the scene
                 var element = scene.element;
+
+                // get its position relative to the page's viewport
                 var rect = element.getBoundingClientRect();
 
-                // If offscreen, skip
+                // check if it's offscreen. If so skip it
                 if (rect.bottom < 0 || rect.top > renderer.domElement.clientHeight ||
                     rect.right < 0 || rect.left > renderer.domElement.clientWidth) {
-                    return;
+                    return;  // it's off screen
                 }
+
+                // set the viewport
                 var width = rect.right - rect.left;
                 var height = rect.bottom - rect.top;
                 var left = rect.left;
@@ -263,25 +270,6 @@
             });
             renderer.enableScissorTest(false);
         }
-
-        function updateSize() {
-            var width = canvas.clientWidth;
-            var height = canvas.clientHeight;
-            if (canvas.width !== width || canvas.height !== height) {
-                renderer.setSize(width, height, false);
-            }
-            controls.handleResize();
-        }
-
-        function animate() {
-            requestAnimationFrame(animate);
-            render();
-            controls.update();
-        }
-
-        // Initialize and animate
-        init();
-        animate();
     </script>
 </body>
 

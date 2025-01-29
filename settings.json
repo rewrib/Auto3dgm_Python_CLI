@@ -1,1 +1,1 @@
-{"num_subsample": [100, 200], "seed": null, "num_cores": 6, "sample_method": "FPS", "reflection": true, "mesh_dir": "/home/batest/Projects/BA/output/Morphosource/Meshes5_cleaned/SphereTopology/", "output_dir": "/home/batest/Projects/BA/output/Morphosource/tkinter/"}
+{"num_subsample": [100, 200], "seed": null, "num_cores": 6, "sample_method": "FPS", "reflection": true, "mesh_dir": "/home/batest/Projects/BA/output/Morphosource/Meshes5_cleaned/SphereTopology/", "output_dir": "/home/batest/Projects/BA/output/Morphosource/tkinter3//"}
